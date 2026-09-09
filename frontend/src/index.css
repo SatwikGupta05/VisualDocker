@@ -1,0 +1,94 @@
+@import "@xyflow/react/dist/style.css";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-truffle: #120f0e;
+  --bg-panel: #1a1614;
+  --bg-card: #241e1b;
+  --border-truffle: #3a312c;
+  --accent-hazelnut: #ff7b00;
+  --accent-glow: rgba(255, 123, 0, 0.25);
+  --text-main: #f0e8e2;
+  --text-muted: #a3958c;
+  --font-inter: 'Inter', sans-serif;
+  --font-code: 'JetBrains Mono', monospace;
+  --font-term: 'IBM Plex Mono', monospace;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-truffle);
+  color: var(--text-main);
+  font-family: var(--font-inter);
+}
+
+/* Custom Dark Truffle / Hazelnut Scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: #120f0e;
+}
+::-webkit-scrollbar-thumb {
+  background: #3a312c;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #ff7b00;
+}
+
+/* ReactFlow Canvas Overrides */
+.react-flow__background {
+  background-color: #120f0e !important;
+}
+
+.react-flow__controls {
+  background-color: #1a1614 !important;
+  border: 1px solid #3a312c !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6) !important;
+}
+
+.react-flow__controls-button {
+  background-color: #241e1b !important;
+  border-bottom: 1px solid #3a312c !important;
+  color: #ff7b00 !important;
+  fill: #ff7b00 !important;
+}
+
+.react-flow__controls-button:hover {
+  background-color: #322a26 !important;
+}
+
+/* Handle Styling: Custom Docker Node Handles */
+.react-flow__handle {
+  width: 10px !important;
+  height: 10px !important;
+  border-radius: 50% !important;
+  border: 2px solid #ff7b00 !important;
+  background-color: #120f0e !important;
+}
+
+/* Animated Flow Edges */
+.react-flow__edge-path {
+  stroke: #ff7b00 !important;
+  stroke-width: 2.5px !important;
+}
+
+.animated-edge {
+  stroke-dasharray: 6;
+  animation: edgeDash 1s linear infinite;
+}
+
+@keyframes edgeDash {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}

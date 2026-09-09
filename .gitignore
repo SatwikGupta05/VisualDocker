@@ -1,0 +1,22 @@
+# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# Environment Variables
+.env
+!.env.example
+
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
