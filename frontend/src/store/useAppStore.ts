@@ -132,5 +132,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   setGeneratedFiles: (files) => set({ generatedFiles: files }),
   setIsYamlOpen: (open) => set({ isYamlOpen: open }),
   setActiveTab: (tab) => set({ activeTab: tab }),
-  loadPreset: (presetNodes, presetEdges) => set({ nodes: presetNodes, edges: presetEdges })
+  loadPreset: (presetNodes, presetEdges) => {
+    const sanitizedNodes = (presetNodes || []).map((node, idx) => ({
+      ...node,
+      position: node.position && typeof node.position.x === 'number' && typeof node.position.y === 'number'
+        ? node.position
+        : { x: 200 + (idx % 3) * 280, y: 150 + Math.floor(idx / 3) * 200 }
+    }));
+    set({ nodes: sanitizedNodes, edges: presetEdges || [] });
+  }
 }));

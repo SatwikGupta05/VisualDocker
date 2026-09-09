@@ -14,6 +14,7 @@ import { Header } from '../components/Header';
 import { ConsoleViewer } from '../components/ConsoleViewer';
 import { NodeSettingsModal } from '../components/NodeSettingsModal';
 import { GeneratedFilesModal } from '../components/GeneratedFilesModal';
+import { AiChatbotPopup } from '../components/AiChatbotPopup';
 import { useAppStore } from '../store/useAppStore';
 import axios from 'axios';
 
@@ -181,45 +182,8 @@ const CanvasContent: React.FC = () => {
         <GeneratedFilesModal />
       )}
 
-      {/* AI Suggest Popup (Bottom Right Corner without Backdrop Blur) */}
-      {isAiModalOpen && (
-        <div className="absolute bottom-4 right-4 z-40 w-full max-w-md bg-[#1a1614] border-2 border-[#ff7b00]/60 rounded-2xl p-6 shadow-[0_10px_30px_rgba(0,0,0,0.8)] space-y-4">
-          <div className="flex items-center justify-between border-b border-[#3a312c] pb-3">
-            <h3 className="font-extrabold text-[15px] text-[#ff7b00] uppercase tracking-wider flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-[#ff7b00]" />
-              AI ARCHITECTURE BUILDER
-            </h3>
-            <button onClick={() => setIsAiModalOpen(false)} className="text-[#a3958c] hover:text-[#f0e8e2] transition">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-          <p className="text-[12px] text-[#a3958c] font-mono">
-            Describe your target system (e.g. "FastAPI backend with Postgres database and redis cache").
-          </p>
-          <textarea
-            rows={4}
-            value={aiPrompt}
-            onChange={(e) => setAiPrompt(e.target.value)}
-            placeholder="e.g. FastAPI app connected to PostgreSQL database and Redis network..."
-            className="w-full bg-[#241e1b] border border-[#3a312c] rounded-xl p-3 text-[13px] text-[#f0e8e2] font-mono focus:border-[#ff7b00] focus:outline-none"
-          />
-          <div className="flex justify-end gap-3 pt-2">
-            <button
-              onClick={() => setIsAiModalOpen(false)}
-              className="px-4 py-2 bg-[#241e1b] hover:bg-[#322a26] text-[#a3958c] hover:text-[#f0e8e2] rounded-lg text-[12px] uppercase font-bold transition"
-            >
-              CANCEL
-            </button>
-            <button
-              onClick={handleAiGenerate}
-              disabled={isAiLoading}
-              className="px-5 py-2 bg-[#ff7b00] hover:bg-[#e06c00] text-black font-extrabold rounded-lg text-[12px] uppercase tracking-wider shadow-[0_0_15px_rgba(255,123,0,0.4)] disabled:opacity-50 transition"
-            >
-              {isAiLoading ? 'GENERATING...' : 'GENERATE GRAPH'}
-            </button>
-          </div>
-        </div>
-      )}
+      {/* AI Chatbot Popup (Bottom Right Corner without Backdrop Blur) */}
+      <AiChatbotPopup />
     </div>
   );
 };
