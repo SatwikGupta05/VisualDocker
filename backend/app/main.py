@@ -4,7 +4,7 @@ from app.models.graph import GraphData, DeployRequest
 from app.engine.validator import validate_graph
 from app.engine.generator import generate_docker_compose, generate_files
 from app.engine.ai_assistant import generate_ai_architecture, PromptRequest
-from app.docker.service import deploy_stack, get_stack_status, get_container_logs
+from app.docker.service import deploy_stack, stop_stack, get_stack_status, get_container_logs
 
 from dotenv import load_dotenv
 
@@ -48,6 +48,13 @@ def deploy_up(req: DeployRequest):
     res = deploy_stack(yaml_str, files)
     if not res.get("success"):
         raise HTTPException(status_code=500, detail=res.get("message", "Deployment failed"))
+    return res
+
+@app.post("/api/deployments/down")
+def deploy_down():
+    res = stop_stack()
+    if not res.get("success"):
+        raise HTTPException(status_code=500, detail=res.get("message", "Failed to stop stack"))
     return res
 
 @app.get("/api/deployments/status")

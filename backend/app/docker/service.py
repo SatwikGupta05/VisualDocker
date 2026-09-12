@@ -49,6 +49,36 @@ def deploy_stack(compose_yaml: str, files: List[Dict[str, str]] = None) -> Dict[
             "temp_dir": temp_dir
         }
 
+def stop_stack() -> Dict[str, Any]:
+    client = get_docker_client()
+    if not client:
+        return {"success": False, "message": "Docker daemon unavailable."}
+
+    stopped_count = 0
+    try:
+        containers = client.containers.list(all=True)
+        for c in containers:
+            # Stop any stack containers matching stack prefixes or active compose services
+            if any(p in c.name.lower() for p in ["temp_stack", "stack", "visualdocker", "app"]) or c.status == "running":
+                try:
+                    c.stop(timeout=3)
+                except Exception:
+                    pass
+                try:
+                    c.remove(force=True)
+                except Exception:
+                    pass
+                stopped_count += 1
+        return {
+            "success": True,
+            "message": f"Stopped and cleaned {stopped_count} container(s)."
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Failed to stop stack containers: {str(e)}"
+        }
+
 def get_stack_status() -> List[Dict[str, Any]]:
     client = get_docker_client()
     if not client:

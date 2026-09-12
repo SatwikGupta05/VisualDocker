@@ -21,9 +21,29 @@ export const Header: React.FC = () => {
     setActiveTab
   } = useAppStore();
 
+  const handleStopStack = async () => {
+    try {
+      addConsoleLog('[DEPLOYMENT] Stopping running stack containers...');
+      const res = await axios.post('/api/deployments/down');
+      setDeploymentStatus('OFFLINE');
+      addConsoleLog(`[DEPLOYMENT] ${res.data?.message || 'Stack stopped successfully.'}`);
+    } catch (err: any) {
+      setDeploymentStatus('OFFLINE');
+      addConsoleLog(`[DEPLOYMENT] Stack status reset (${err.message}).`);
+    }
+  };
+
   const handleDeploy = async () => {
     setIsDeploying(true);
     setDeploymentStatus('DEPLOYING');
+    addConsoleLog('[DEPLOYMENT] Stopping previous running stack containers...');
+
+    try {
+      await axios.post('/api/deployments/down');
+    } catch (e) {
+      // ignore non-critical stop errors before up
+    }
+
     addConsoleLog('[DEPLOYMENT] Initiating stack deployment pipeline...');
 
     try {
@@ -58,7 +78,6 @@ export const Header: React.FC = () => {
       if (res.data.files) {
         setGeneratedFiles(res.data.files);
       }
-      setIsYamlOpen(true);
       addConsoleLog('[ENGINE] Generated files preview updated.');
     } catch (err: any) {
       addConsoleLog(`[ERROR] File generation failed: ${err.message}`);
@@ -120,27 +139,25 @@ export const Header: React.FC = () => {
         </div>
 
         {/* Deploy & Stop Buttons */}
-        {deploymentStatus === 'RUNNING' ? (
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => {
-              setDeploymentStatus('OFFLINE');
-              addConsoleLog('[DEPLOYMENT] Stack stopped by user.');
-            }}
-            className="flex items-center gap-1.5 px-4 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/50 text-red-400 rounded-lg text-[12px] font-extrabold uppercase tracking-wider transition shadow-[0_0_15px_rgba(239,68,68,0.2)]"
+            onClick={handleStopStack}
+            className="flex items-center gap-1.5 px-4 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/50 text-red-400 rounded-lg text-[12px] font-extrabold uppercase tracking-wider transition shadow-[0_0_15px_rgba(239,68,68,0.2)] cursor-pointer"
+            title="Stop all running Docker stack containers"
           >
             <Square className="w-3.5 h-3.5 fill-current" />
-            STOP
+            STOP STACK
           </button>
-        ) : (
+
           <button
             onClick={handleDeploy}
             disabled={isDeploying}
-            className="flex items-center gap-1.5 px-5 py-2 bg-[#ff7b00] hover:bg-[#e06c00] text-black font-extrabold rounded-lg text-[12px] tracking-wider uppercase transition shadow-[0_0_20px_rgba(255,123,0,0.4)] disabled:opacity-50"
+            className="flex items-center gap-1.5 px-5 py-2 bg-[#ff7b00] hover:bg-[#e06c00] text-black font-extrabold rounded-lg text-[12px] tracking-wider uppercase transition shadow-[0_0_20px_rgba(255,123,0,0.4)] disabled:opacity-50 cursor-pointer"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
             {isDeploying ? 'DEPLOYING...' : 'DEPLOY STACK'}
           </button>
-        )}
+        </div>
       </div>
     </header>
   );

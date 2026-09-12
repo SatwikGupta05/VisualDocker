@@ -19,6 +19,44 @@ def find_next_free_port(start_port: int) -> int:
         port += 1
     return start_port
 
+def resolve_docker_image(raw_image: str, label: str) -> str:
+    img = (raw_image or "").strip().lower()
+    lbl = (label or "").strip().lower()
+
+    # Known custom/local image names that don't exist on Docker Hub
+    invalid_local_images = {
+        "react-frontend", "react-frontend:latest", "frontend", "frontend:latest",
+        "node-backend", "node-backend:latest", "backend", "backend:latest",
+        "node-api", "node-api:latest", "express-backend", "express-backend:latest",
+        "fastapi-service", "fastapi-service:latest", "python-backend", "python-backend:latest"
+    }
+
+    if img in invalid_local_images or not img:
+        if "react" in img or "front" in img or "react" in lbl or "front" in lbl:
+            return "node:22-alpine"
+        elif "python" in img or "fastapi" in img or "python" in lbl or "fastapi" in lbl:
+            return "python:3.11-slim"
+        elif "nginx" in img or "nginx" in lbl:
+            return "nginx:alpine"
+        elif "postgres" in img or "postgres" in lbl:
+            return "postgres:16-alpine"
+        elif "redis" in img or "redis" in lbl:
+            return "redis:latest"
+        else:
+            return "node:22-alpine"
+
+    if ":" not in img and "/" not in img:
+        known_official = {"nginx", "postgres", "redis", "node", "python", "ubuntu", "alpine", "mysql", "mongo", "mongodb", "rabbitmq", "memcached", "traefik"}
+        if img not in known_official:
+            if "react" in img or "front" in img:
+                return "node:22-alpine"
+            elif "python" in img or "fastapi" in img:
+                return "python:3.11-slim"
+            else:
+                return f"{img}:latest"
+
+    return raw_image
+
 def generate_docker_compose(graph: GraphData) -> str:
     services: Dict[str, Any] = {}
     networks: Dict[str, Any] = {}
@@ -47,7 +85,8 @@ def generate_docker_compose(graph: GraphData) -> str:
 
     for container in container_nodes:
         c_label = getattr(container.data, "label", container.id).lower().replace(" ", "_")
-        c_image = getattr(container.data, "image", "ubuntu:latest")
+        raw_image = getattr(container.data, "image", "ubuntu:latest")
+        c_image = resolve_docker_image(raw_image, c_label)
         c_cmd = getattr(container.data, "command", None)
 
         service_spec: Dict[str, Any] = {
