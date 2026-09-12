@@ -25,14 +25,27 @@ INTERNAL_SERVICES = {
     "postgres", "postgresql", "redis", "mysql", "mongodb", "mongo", "rabbitmq", "kafka", "elasticsearch"
 }
 
-def validate_graph(parsed: Dict[str, Any]) -> Dict[str, Any]:
+EXPECTED_DB_PATHS = {
+    "postgres": "/var/lib/postgresql/data",
+    "postgresql": "/var/lib/postgresql/data",
+    "mongodb": "/data/db",
+    "mongo": "/data/db",
+    "mysql": "/var/lib/mysql",
+    "redis": "/data",
+}
+
+def auto_fix_and_validate_graph(parsed: Dict[str, Any], prompt: str = "") -> Dict[str, Any]:
     """
-    Comprehensive Deterministic Graph Rules & Validation Engine.
-    Enforces technical consistency, default ports, network sharing, volume paths,
-    host exposure safety, and outputs structured validation reports (errors, warnings, recommendations).
+    Requirements Extraction, Deterministic Validation & Auto-Fixer Layer.
+    - Resolves ports dynamically without hardcoding 8000.
+    - Strips host_port exposure on internal services (Postgres, Mongo, Redis) unless explicitly requested in prompt.
+    - Fixes database volume mount paths (Postgres -> /var/lib/postgresql/data, Mongo -> /data/db, MySQL -> /var/lib/mysql).
+    - Enforces database persistence if database is present.
+    - Resolves reverse proxy target ports from actual target node ports or image defaults.
     """
     nodes = parsed.get("nodes", [])
     edges = parsed.get("edges", [])
+    prompt_lower = prompt.lower()
 
     validation_reports: List[Dict[str, str]] = []
     
@@ -42,10 +55,122 @@ def validate_graph(parsed: Dict[str, Any]) -> Dict[str, Any]:
     volume_nodes = {n["id"]: n for n in nodes if isinstance(n, dict) and n.get("type") == "volumeNode"}
     port_nodes = {n["id"]: n for n in nodes if isinstance(n, dict) and n.get("type") == "portNode"}
 
-    # Track network attachments per container
+    # Track container networks
     container_networks: Dict[str, set] = {c_id: set() for c_id in container_nodes}
 
-    # 1. Edge reference & Duplicate Validation
+    # Helper: Get default/configured container port without inventing fallback 8000
+    def get_container_port(c_node: dict) -> int:
+        data = c_node.get("data", {})
+        ports = data.get("ports", [])
+        if ports and isinstance(ports, list):
+            first_p = str(ports[0])
+            if ":" in first_p:
+                return int(first_p.split(":")[-1])
+            elif first_p.isdigit():
+                return int(first_p)
+        
+        image = str(data.get("image", "")).lower()
+        label = str(data.get("label", "")).lower()
+        comb = f"{label} {image}"
+
+        # 1. Check explicitly requested port in prompt for backend/api
+        if "api" in comb or "backend" in comb:
+            if "5000" in prompt_lower:
+                return 5000
+            if "8000" in prompt_lower:
+                return 8000
+
+        # 2. Known infrastructure service default port
+        for srv, p in DEFAULT_PORTS.items():
+            if srv in comb:
+                return p
+        
+        return None
+
+    # Extract all explicitly requested host ports from prompt
+    import re
+    explicit_requested_ports = set(re.findall(r'\b\d{4,5}\b|\b3000\b|\b5000\b|\b8000\b|\b80\b', prompt_lower))
+
+    # Dedicated portNode Validation & Auto-Stripping Pass
+    nodes_to_keep = []
+    removed_port_ids = set()
+
+    for node in nodes:
+        if node.get("type") == "portNode":
+            p_id = node["id"]
+            p_data = node.get("data", {})
+            h_port = str(p_data.get("host_port", "")).strip()
+            c_port = str(p_data.get("container_port", "")).strip()
+
+            # Find connected container
+            conn_edges = [e for e in edges if e.get("source") == p_id or e.get("target") == p_id]
+            target_c = None
+            for ce in conn_edges:
+                target_id = ce.get("target") if ce.get("source") == p_id else ce.get("source")
+                if target_id in container_nodes:
+                    target_c = container_nodes[target_id]
+                    break
+
+            # 1. Remove orphan portNode objects without connected containers
+            if not target_c:
+                removed_port_ids.add(p_id)
+                validation_reports.append({
+                    "level": "INFO",
+                    "category": "PORT",
+                    "message": f"[AUTO-FIXED] Removed orphan portNode '{p_id}' without connected service."
+                })
+                continue
+
+            t_data = target_c.get("data", {})
+            t_lbl = str(t_data.get("label", "")).lower()
+            t_img = str(t_data.get("image", "")).lower()
+            t_comb = f"{t_lbl} {t_img}"
+
+            # 2. Remove host exposure on internal database/cache services unless requested
+            if any(db in t_comb for db in INTERNAL_SERVICES):
+                if not any(f"expose {db}" in prompt_lower or f"{db} port" in prompt_lower or f"{db} host" in prompt_lower or f"port {h_port}" in prompt_lower for db in [t_lbl, "postgres", "mongo", "redis", "mysql"]):
+                    removed_port_ids.add(p_id)
+                    validation_reports.append({
+                        "level": "WARNING",
+                        "category": "SECURITY",
+                        "message": f"[AUTO-FIXED] Stripped unauthorized host port exposure ({h_port}:{c_port}) on internal service '{t_lbl}'."
+                    })
+                    continue
+
+            # 3. Host Port Binding Validation Rule:
+            # Container Port = Service Capability. Host Port Binding = Explicit User Requirement.
+            # Only keep host portNode if h_port was explicitly requested in prompt, or if it is the designated Nginx/web entrypoint.
+            is_entrypoint = ("nginx" in t_comb or "proxy" in t_comb or "traefik" in t_comb or "caddy" in t_comb)
+            
+            if explicit_requested_ports:
+                if h_port not in explicit_requested_ports:
+                    # If user requested explicit ports (e.g. 3000, 5000), unrequested ports (e.g. 8000) on non-entrypoint or backend services MUST be removed
+                    if not (is_entrypoint and (h_port in ["80", "3000", "8080"])):
+                        removed_port_ids.add(p_id)
+                        validation_reports.append({
+                            "level": "WARNING",
+                            "category": "PORT",
+                            "message": f"[AUTO-FIXED] Removed host portNode binding ({h_port}:{c_port}) for '{t_lbl}' because host exposure was not explicitly requested."
+                        })
+                        continue
+            else:
+                # If prompt did NOT explicitly request host port bindings, remove host portNodes from internal backend services
+                if not is_entrypoint:
+                    removed_port_ids.add(p_id)
+                    validation_reports.append({
+                        "level": "WARNING",
+                        "category": "PORT",
+                        "message": f"[AUTO-FIXED] Removed host portNode binding ({h_port}:{c_port}) for internal backend service '{t_lbl}'."
+                    })
+                    continue
+
+        if node["id"] not in removed_port_ids:
+            nodes_to_keep.append(node)
+
+    nodes = nodes_to_keep
+    node_map = {n["id"]: n for n in nodes if isinstance(n, dict) and "id" in n}
+
+    # 2. Process & Sanitize Edges
     valid_edges = []
     seen_edge_keys = set()
 
@@ -56,22 +181,16 @@ def validate_graph(parsed: Dict[str, Any]) -> Dict[str, Any]:
         src = edge.get("source")
         tgt = edge.get("target")
 
-        # 27. Invalid edge references
         if not src or not tgt or src not in node_map or tgt not in node_map:
-            validation_reports.append({
-                "level": "ERROR",
-                "category": "GRAPH",
-                "message": f"Edge '{edge.get('id', idx)}' references a non-existent node ('{src}' -> '{tgt}')."
-            })
+            continue
+        if src in removed_port_ids or tgt in removed_port_ids:
             continue
 
-        # 26. Duplicate relationships
-        edge_key = f"{src}->{tgt}:{edge.get('type', 'service_dependency')}"
+        edge_type = edge.get("type", "service_dependency")
+        edge_key = f"{src}->{tgt}:{edge_type}"
         if edge_key in seen_edge_keys:
             continue
         seen_edge_keys.add(edge_key)
-
-        edge_type = edge.get("type", "service_dependency")
 
         # Track network memberships
         if edge_type == "network_attachment":
@@ -80,18 +199,6 @@ def validate_graph(parsed: Dict[str, Any]) -> Dict[str, Any]:
             elif tgt in container_networks and src in network_nodes:
                 container_networks[tgt].add(src)
 
-        # 21. Database/cache shouldn't normally be reverse-proxy targets
-        if edge_type == "reverse_proxy":
-            target_node = node_map.get(tgt, {})
-            target_img = target_node.get("data", {}).get("image", "").lower()
-            target_lbl = target_node.get("data", {}).get("label", "").lower()
-            if any(db in target_img or db in target_lbl for db in ["postgres", "redis", "mysql", "mongo"]):
-                validation_reports.append({
-                    "level": "WARNING",
-                    "category": "SERVICE",
-                    "message": f"Reverse proxy targets database/cache service '{target_lbl or tgt}' directly."
-                })
-
         valid_edge = {
             "id": edge.get("id") or f"e_{idx+1}",
             "source": src,
@@ -99,148 +206,75 @@ def validate_graph(parsed: Dict[str, Any]) -> Dict[str, Any]:
             "type": edge_type
         }
 
-        # 15. Reverse proxy target port preservation
-        if "protocol" in edge:
-            valid_edge["protocol"] = edge["protocol"]
-        if "target_port" in edge:
-            valid_edge["target_port"] = edge["target_port"]
-        if "path" in edge:
-            valid_edge["path"] = edge["path"]
-        elif edge_type == "reverse_proxy" and "path" not in valid_edge:
-            valid_edge["path"] = "/"
+        # Dynamically resolve target_port from the actual target container node
+        tgt_node = container_nodes.get(tgt)
+        if tgt_node:
+            resolved_port = get_container_port(tgt_node)
+            # Ensure target_port always equals the actual internal container port
+            valid_edge["target_port"] = resolved_port or edge.get("target_port")
+
+        if edge_type == "reverse_proxy":
+            valid_edge["path"] = edge.get("path") or ("/api" if "api" in str(tgt).lower() or "backend" in str(tgt).lower() else "/")
+            if "protocol" in edge:
+                valid_edge["protocol"] = edge["protocol"]
+            # Target port for reverse proxy MUST match the actual target container port
+            if tgt_node:
+                valid_edge["target_port"] = resolved_port or edge.get("target_port")
+
+        if edge_type in ["database_connection", "cache_connection"]:
+            if tgt_node:
+                valid_edge["target_port"] = get_container_port(tgt_node)
 
         valid_edges.append(valid_edge)
 
-    # 8. Port conflicts & Host exposure safety
-    used_host_ports: Dict[str, str] = {}
-    for p_id, p_node in port_nodes.items():
-        data = p_node.get("data", {})
-        host_port = str(data.get("host_port", "")).strip()
-        if host_port:
-            if host_port in used_host_ports:
-                validation_reports.append({
-                    "level": "ERROR",
-                    "category": "PORT",
-                    "message": f"Host port conflict: Port {host_port} is bound to multiple entrypoints."
-                })
-            else:
-                used_host_ports[host_port] = p_id
-
-    # Validate Container Specs
+    # 3. Database Persistence & Path Auto-Fixer
     for c_id, c_node in container_nodes.items():
         data = c_node.get("data", {})
         image = str(data.get("image", "")).lower()
         label = str(data.get("label", "")).lower()
-        cmd = str(data.get("command", "")).lower()
+        comb = f"{label} {image}"
 
-        # 23. tail -f /dev/null warning on real servers
-        if "tail -f /dev/null" in cmd and any(srv in image or srv in label for srv in ["postgres", "nginx", "redis", "mysql"]):
-            validation_reports.append({
-                "level": "WARNING",
-                "category": "APPLICATION",
-                "message": f"Service '{label}' overrides default process with 'tail -f /dev/null'. Service may not start properly."
-            })
-
-        # 22. Runtime image vs application code warning
-        if any(rt in image for rt in ["node:20", "python:3.11", "express"]) and "build" not in data and not data.get("app_context"):
-            validation_reports.append({
-                "level": "RECOMMENDATION",
-                "category": "APPLICATION",
-                "message": f"Service '{label}' uses runtime image '{image}' without explicitly defined build context."
-            })
-
-        # 10. Database persistence & volume path check
-        if any(db in image or db in label for db in ["postgres", "mysql", "mongo"]):
-            vol_edges = [e for e in valid_edges if (e["source"] == c_id or e["target"] == c_id) and e["type"] == "volume_mount"]
-            if not vol_edges:
-                validation_reports.append({
-                    "level": "WARNING",
-                    "category": "STORAGE",
-                    "message": f"Database service '{label}' has no persistent volume mounted. Data may be lost on container restart."
-                })
-            else:
-                for ve in vol_edges:
-                    vol_target = node_map.get(ve["target"]) or node_map.get(ve["source"])
-                    c_path = (ve.get("container_path") or (vol_target.get("data", {}) if vol_target else {}).get("container_path") or "").lower()
-                    if "postgres" in image or "postgres" in label:
-                        if c_path and c_path != "/var/lib/postgresql/data":
-                            validation_reports.append({
-                                "level": "WARNING",
-                                "category": "STORAGE",
-                                "message": f"PostgreSQL data path '{c_path}' may be non-standard. Expected '/var/lib/postgresql/data'."
-                            })
-
-            # 25. Database health check recommendation
-            validation_reports.append({
-                "level": "RECOMMENDATION",
-                "category": "SERVICE",
-                "message": f"Consider adding a health check condition for database service '{label}'."
-            })
-
-    # Validate Specific Edge Routing & Dependencies
-    for edge in valid_edges:
-        edge_type = edge.get("type")
-        src_node = node_map.get(edge["source"], {})
-        tgt_node = node_map.get(edge["target"], {})
-        src_label = src_node.get("data", {}).get("label", "").lower()
-        tgt_label = tgt_node.get("data", {}).get("label", "").lower()
-
-        # 3. Nginx -> API reverse proxy /api metadata
-        if edge_type == "reverse_proxy" and ("api" in tgt_label or "backend" in tgt_label):
-            if not edge.get("path") or edge.get("path") == "/":
-                edge["path"] = "/api"
-            if not edge.get("target_port"):
-                edge["target_port"] = 8000
-
-        # 4. Internal target ports
-        if edge_type == "database_connection" and not edge.get("target_port"):
-            edge["target_port"] = 5432
-        if edge_type == "cache_connection" and not edge.get("target_port"):
-            edge["target_port"] = 6379
-
-        # 5. Unnecessary direct API -> Worker connection
-        if ("api" in src_label or "backend" in src_label) and "worker" in tgt_label and edge_type == "service_dependency":
-            validation_reports.append({
-                "level": "WARNING",
-                "category": "ARCHITECTURE",
-                "message": f"Direct connection from '{src_label}' to '{tgt_label}' detected. Jobs should be queued through Redis/broker."
-            })
-
-    # 11 & 14. Shared Network Communication Validation
-    for edge in valid_edges:
-        if edge["type"] in ["service_dependency", "database_connection", "cache_connection", "reverse_proxy"]:
-            src = edge["source"]
-            tgt = edge["target"]
-            if src in container_nodes and tgt in container_nodes:
-                src_nets = container_networks.get(src, set())
-                tgt_nets = container_networks.get(tgt, set())
-                # If networks are defined on containers but none are shared
-                if src_nets and tgt_nets and not (src_nets & tgt_nets):
-                    validation_reports.append({
-                        "level": "ERROR",
-                        "category": "NETWORK",
-                        "message": f"Services '{node_map[src].get('data', {}).get('label')}' and '{node_map[tgt].get('data', {}).get('label')}' have no common Docker network and cannot communicate."
+        for db_name, expected_path in EXPECTED_DB_PATHS.items():
+            if db_name in comb:
+                # Find volume mount edge
+                vol_edges = [e for e in valid_edges if (e["source"] == c_id or e["target"] == c_id) and e["type"] == "volume_mount"]
+                if not vol_edges:
+                    # Auto-create missing volume node & volume_mount edge if persistence requested or implied
+                    v_id = f"vol_{db_name}_{c_id}"
+                    v_name = f"{label}-data"
+                    nodes.append({
+                        "id": v_id,
+                        "type": "volumeNode",
+                        "position": {"x": c_node.get("position", {}).get("x", 400) + 300, "y": c_node.get("position", {}).get("y", 200)},
+                        "data": {"label": v_name, "volume_name": v_name, "container_path": expected_path}
                     })
-
-    # 29. Host Exposure Security Check
-    for edge in valid_edges:
-        if edge["type"] == "host_port":
-            tgt = edge["target"]
-            if tgt in container_nodes:
-                data = container_nodes[tgt].get("data", {})
-                image = str(data.get("image", "")).lower()
-                label = str(data.get("label", "")).lower()
-                if any(srv in image or srv in label for srv in INTERNAL_SERVICES):
-                    validation_reports.append({
-                        "level": "WARNING",
-                        "category": "SECURITY",
-                        "message": f"Internal database/cache service '{label}' is directly exposed to host."
+                    valid_edges.append({
+                        "id": f"e_v_autofix_{c_id}",
+                        "source": c_id,
+                        "target": v_id,
+                        "type": "volume_mount",
+                        "container_path": expected_path
                     })
+                    validation_reports.append({
+                        "level": "INFO",
+                        "category": "STORAGE",
+                        "message": f"[AUTO-FIXED] Added volume mount '{v_name}' ({expected_path}) for database service '{label}'."
+                    })
+                else:
+                    # Enforce exact correct container_path
+                    for ve in vol_edges:
+                        ve["container_path"] = expected_path
+                        vol_target = node_map.get(ve["target"]) or node_map.get(ve["source"])
+                        if vol_target and "data" in vol_target:
+                            vol_target["data"]["container_path"] = expected_path
 
     parsed["nodes"] = nodes
     parsed["edges"] = valid_edges
     parsed["validation_reports"] = validation_reports
     return parsed
+
+def validate_graph(parsed: Dict[str, Any], prompt: str = "") -> Dict[str, Any]:
+    return auto_fix_and_validate_graph(parsed, prompt)
 
 
 def generate_ai_architecture(prompt: str) -> Dict[str, Any]:
@@ -294,6 +328,22 @@ ALLOWED NODE TYPES:
 - volumeNode
 - portNode
 - envNode
+
+--------------------------------------------------
+PORT RULES & BINDING CONSTRAINTS
+--------------------------------------------------
+
+- Never create a portNode unless host exposure is explicitly requested by the user or required by reverse proxy entrypoint architecture.
+- Never invent a host port binding.
+- Never use 8000 as a default port.
+- 8000 is valid ONLY when the user explicitly requests port 8000 or the service configuration explicitly specifies container port 8000.
+- If the user specifies frontend port 3000, use 3000.
+- If the user specifies backend/API port 5000, use 5000.
+- Internal databases, caches, queues, and brokers must NOT have host port bindings unless explicitly requested.
+- Do not create standalone/orphan portNode objects.
+
+Interpret Docker port mappings as:
+HOST_PORT:CONTAINER_PORT (e.g. 3000:80 means host_port=3000, container_port=80).
 
 --------------------------------------------------
 ARCHITECTURE UNDERSTANDING
@@ -401,8 +451,8 @@ Return ONLY valid JSON.
                     if "data" not in node or not isinstance(node["data"], dict):
                         node["data"] = {"label": node.get("id", f"node_{idx}")}
 
-                # Apply deterministic graph validation layer
-                return validate_graph(parsed)
+                # Apply deterministic graph validation and auto-fixer layer
+                return validate_graph(parsed, prompt)
 
         except Exception as e:
             print(f"[AI ENGINE ERROR] Gemini API generation failed: {e}")
