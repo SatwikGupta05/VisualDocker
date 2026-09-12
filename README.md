@@ -6,12 +6,15 @@ The **VisualDocker** platform is an interactive, visual modeling platform and de
 
 ## 🌟 Key Features
 
-- 🎨 **Interactive Node Canvas**: Drag-and-drop workflow powered by React Flow with custom nodes for **Containers**, **Networks**, **Volumes**, **Ports**, and **Environment Variables**.
+- 🎨 **Interactive Node Canvas**: Drag-and-drop & click-to-add workflow powered by React Flow with custom nodes for **Containers**, **Networks**, **Volumes**, **Ports**, and **Environment Variables**.
+- 🛑 **One-Click Stack Teardown (`STOP STACK`)**: Dedicated header action button to instantly stop and clean up all active containers on your Docker host (`POST /api/deployments/down`) before deploying new topologies.
+- 🔍 **AI Log Diagnosis & Structured Error Analysis (`Analyse Logs`)**: Integrated AI Stack Architect shortcut (`POST /api/ai/analyze-logs`) that inspects logs from your latest deployment run and generates structured, actionable debugging breakdowns (Error, Root Cause, Affected Service, Fix, Command).
+- 🛡️ **Automated Image Sanitization & Conflict Prevention**: Intelligent image tag resolution mapping local placeholders (e.g. `react-frontend`, `node-backend`) to official Docker Hub base images (`node:22-alpine`, `python:3.11-slim`, `postgres:16-alpine`, `redis:latest`), while omitting hardcoded container names to prevent name collision errors.
 - 🔒 **Strict Directional Flow Rules**: Built-in edge connection validation preventing invalid schema connections (e.g. connecting ports or env vars directly to network bridges).
-- ⚡ **Dynamic `docker-compose.yml` Generator**: Automatically converts canvas node and edge graphs into standard `docker-compose.yml` declarations.
-- 🔄 **Automatic Host Port Collision Shift**: Scans the host network to automatically shift occupied host ports (e.g. `80:80` $\rightarrow$ `8080:80`) without crashing stack deployment.
+- ⚡ **Dynamic `docker-compose.yml` Generator**: Automatically converts canvas node and edge graphs into standard `docker-compose.yml` and supporting service files (e.g., `nginx.conf`).
+- 🔄 **Automatic Host Port Collision Shift**: Scans host network interfaces to automatically shift occupied host ports (e.g. `80:80` $\rightarrow$ `8080:80`) without crashing stack deployment.
 - 💬 **Gemini AI Architecture Assistant**: Converts natural language requests into structured canvas node topologies using Google Gemini API.
-- 📊 **3-Tier Telemetry & Log Console**: Live container metrics (status, memory, CPU %, uptime), deployment execution logs, and interactive CLI debugging.
+- 📊 **Real-Time Docker Daemon Telemetry & Stationed Console**: Live container metrics (status, uptime, memory, CPU %), deployment execution logs, and an interactive Docker CLI terminal with localized scroll control.
 
 ---
 
@@ -21,16 +24,16 @@ The **VisualDocker** platform is an interactive, visual modeling platform and de
 graph TD
     subgraph Frontend ["Frontend (Vite + React + React Flow)"]
         Canvas["React Flow Canvas"]
-        Sidebar["Categorized Palette Sidebar"]
-        Console["3-Tier Console Viewer"]
+        Sidebar["Dual-Mode Palette Sidebar (Click / Drag)"]
+        Console["Stationed Console Viewer (Live Telemetry & CLI)"]
         Store["Zustand App Store"]
     end
 
     subgraph Backend ["Backend Engine (FastAPI + Python)"]
         API["FastAPI REST Endpoints"]
         Validator["Canvas Wiring & Port Validator"]
-        Generator["Docker Compose Spec Generator"]
-        AISuggest["Gemini AI Architecture Engine"]
+        Generator["Docker Compose Spec & Image Sanitizer"]
+        AISuggest["Gemini AI Architecture & Log Diagnostics Engine"]
         DockerService["Docker SDK Integration Service"]
     end
 
@@ -69,7 +72,7 @@ graph TD
 - **Container SDK**: [Docker SDK for Python](https://docker-py.readthedocs.io/)
 - **Data Validation**: [Pydantic v2](https://docs.pydantic.dev/)
 - **YAML Engine**: PyYAML
-- **AI Integration**: Google Generative AI (`google-generativeai`)
+- **AI Integration**: Google Generative AI (`google-genai`)
 
 ---
 
@@ -78,8 +81,8 @@ graph TD
 ```
 ├── backend/
 │   ├── app/
-│   │   ├── docker/          # Docker SDK & Compose CLI interface service
-│   │   ├── engine/          # Validation, compose generator & AI assistant modules
+│   │   ├── docker/          # Docker SDK & Compose CLI interface service (up, down, status, logs)
+│   │   ├── engine/          # Validation, compose generator, image sanitizer & AI log analyzer
 │   │   ├── models/          # Pydantic schema models for nodes, edges & graphs
 │   │   └── main.py          # FastAPI application & REST API endpoints
 │   ├── requirements.txt     # Backend Python dependencies
@@ -87,7 +90,7 @@ graph TD
 ├── frontend/
 │   ├── src/
 │   │   ├── canvas/          # React Flow canvas setup & connection handlers
-│   │   ├── components/      # UI components (Console, Sidebar, Header)
+│   │   ├── components/      # UI components (Console, Sidebar, Header, AI Chatbot, File Explorer)
 │   │   ├── nodes/           # Custom React Flow Node components
 │   │   ├── store/           # Zustand graph & app state store
 │   │   ├── App.tsx          # Main layout view
@@ -183,7 +186,7 @@ Ensure the following tools are installed on your host machine:
 | 📦 **Container** | Target (Left) / Source (Right) | Represents a Docker container (e.g. `fastapi`, `postgres`, `redis`). |
 | 🌐 **Network** | Source (Right) | Custom Docker bridge network (e.g. `frontend-net`, `backend-net`). |
 | 💾 **Volume** | Source (Right) | Named persistent volume mount (e.g. `db_data`, `redis_data`). |
-| 🔌 **Port** | Target (Left) | Host-to-Container port binding (e.g. `80:8000`). |
+| 🔌 **Port** | Target (Left) | Host-to-Container port binding (e.g. `8080:80`). |
 | 🔑 **Environment** | Target (Left) | Environment variable key-value bindings. |
 
 ### Wiring Rules
@@ -199,11 +202,41 @@ Ensure the following tools are installed on your host machine:
 | :--- | :--- | :--- |
 | `GET` | `/` | Health check and API status. |
 | `POST` | `/api/validate` | Validates graph wiring & handle directional schema. |
-| `POST` | `/api/generate` | Generates `docker-compose.yml` content from canvas graph. |
+| `POST` | `/api/generate` | Generates `docker-compose.yml` & auxiliary files from canvas graph. |
 | `POST` | `/api/deployments/up` | Validates, generates Compose spec, and deploys container stack. |
-| `GET` | `/api/deployments/status` | Returns live running status & resource metrics for containers. |
+| `POST` | `/api/deployments/down` | Stops and cleans up active running container stack on host. |
+| `GET` | `/api/deployments/status` | Returns live running status & resource metrics from Docker daemon. |
 | `GET` | `/api/deployments/logs/{container_id}` | Streams deployment stdout/stderr logs for a specific container. |
 | `POST` | `/api/ai/suggest` | Generates canvas graph JSON from natural language prompts using Gemini. |
+| `POST` | `/api/ai/analyze-logs` | Analyzes latest stack deployment logs and returns structured diagnosis. |
+
+---
+
+## 🔍 Structured AI Log Diagnostics Format
+
+When using the **Analyse Logs** shortcut in AI Stack Architect, debugging reports are returned in a standard actionable layout:
+
+```text
+🔴 DEPLOYMENT FAILED
+
+Error:
+Container name conflict: "postgres"
+
+Root Cause:
+A container named "postgres" already exists on the Docker host.
+
+Affected Service:
+postgres
+
+Fix:
+Remove the existing container or use dynamic container service naming.
+
+Recommended:
+Remove hardcoded `container_name` from generated Compose files and use `--remove-orphans`.
+
+Command:
+docker rm -f postgres
+```
 
 ---
 
