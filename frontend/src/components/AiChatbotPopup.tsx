@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Sparkles, Send, X, Bot, User, RefreshCw, FileText, CheckCircle2, RotateCcw } from 'lucide-react';
+import { Sparkles, Send, X, Bot, User, RefreshCw, FileText, CheckCircle2, RotateCcw, Activity } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import axios from 'axios';
 
@@ -13,7 +13,7 @@ interface Message {
 }
 
 export const AiChatbotPopup: React.FC = () => {
-  const { nodes, edges, isAiModalOpen, setIsAiModalOpen, loadPreset, addConsoleLog } = useAppStore();
+  const { nodes, edges, isAiModalOpen, setIsAiModalOpen, loadPreset, addConsoleLog, consoleLogs } = useAppStore();
   const [inputPrompt, setInputPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [previousGraph, setPreviousGraph] = useState<{ nodes: any[]; edges: any[] } | null>(null);
@@ -21,7 +21,7 @@ export const AiChatbotPopup: React.FC = () => {
     {
       id: '1',
       sender: 'assistant',
-      text: 'Hello! I am your AI Stack Architect. Describe your system requirements (e.g. "React frontend, Node.js backend, and PostgreSQL database on an app-network") or click "Inspect Canvas" to optimize your layout.',
+      text: 'Hello! I am your AI Stack Architect. Describe your system requirements (e.g. "React frontend, Node.js backend, and PostgreSQL database on an app-network"), click "Inspect Canvas", or click "Analyse Logs" to diagnose stack errors.',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
@@ -115,6 +115,64 @@ export const AiChatbotPopup: React.FC = () => {
     handleSendMessage(promptText);
   };
 
+  const handleAnalyzeLogs = async () => {
+    if (!consoleLogs || consoleLogs.length === 0) {
+      const emptyMsg: Message = {
+        id: Date.now().toString(),
+        sender: 'assistant',
+        text: '⚠️ No deployment or system logs found to analyze yet. Run or deploy a stack first!',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      setMessages((prev) => [...prev, emptyMsg]);
+      return;
+    }
+
+    // Isolate logs from the LATEST stack deployment attempt
+    let lastDeployIndex = -1;
+    for (let i = consoleLogs.length - 1; i >= 0; i--) {
+      if (consoleLogs[i].includes('[DEPLOYMENT] Initiating') || consoleLogs[i].includes('[DEPLOYMENT] Stopping previous')) {
+        lastDeployIndex = i;
+        break;
+      }
+    }
+
+    const targetLogs = lastDeployIndex !== -1 ? consoleLogs.slice(lastDeployIndex) : consoleLogs;
+
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      sender: 'user',
+      text: `🔍 Analyse latest stack deployment logs (${targetLogs.length} entries)...`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+    setMessages((prev) => [...prev, userMsg]);
+    setIsLoading(true);
+    addConsoleLog('[AI CHATBOT] Analyzing latest stack deployment logs...');
+
+    try {
+      const logsCombined = targetLogs.join('\n');
+      const res = await axios.post('/api/ai/analyze-logs', { logs: logsCombined });
+      if (res.data && res.data.analysis) {
+        const botReply: Message = {
+          id: (Date.now() + 1).toString(),
+          sender: 'assistant',
+          text: res.data.analysis,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+        setMessages((prev) => [...prev, botReply]);
+      }
+    } catch (err: any) {
+      const errorReply: Message = {
+        id: (Date.now() + 1).toString(),
+        sender: 'assistant',
+        text: `Error analyzing logs: ${err.message || 'Failed to communicate with log analyzer'}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      setMessages((prev) => [...prev, errorReply]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="absolute bottom-4 right-4 z-40 w-96 sm:w-[420px] h-[520px] bg-[#1a1614] border-2 border-[#ff7b00]/60 rounded-2xl shadow-[0_10px_35px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden font-sans">
       {/* Chatbot Header */}
@@ -141,15 +199,23 @@ export const AiChatbotPopup: React.FC = () => {
       {/* Quick Action Shortcuts */}
       <div className="bg-[#161210] border-b border-[#3a312c] p-2 flex items-center gap-1.5 overflow-x-auto text-[11px] font-mono">
         <button
+          onClick={handleAnalyzeLogs}
+          className="shrink-0 px-2.5 py-1 rounded-md bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 font-bold transition flex items-center gap-1 cursor-pointer"
+          title="Analyze active console error logs"
+        >
+          <Activity className="w-3 h-3 text-red-400" />
+          Analyse Logs
+        </button>
+        <button
           onClick={handleInspectGraph}
-          className="shrink-0 px-2.5 py-1 rounded-md bg-[#ff7b00]/10 text-[#ff7b00] border border-[#ff7b00]/30 hover:bg-[#ff7b00]/20 font-bold transition flex items-center gap-1"
+          className="shrink-0 px-2.5 py-1 rounded-md bg-[#ff7b00]/10 text-[#ff7b00] border border-[#ff7b00]/30 hover:bg-[#ff7b00]/20 font-bold transition flex items-center gap-1 cursor-pointer"
         >
           <FileText className="w-3 h-3" />
           Inspect Canvas ({nodes.length})
         </button>
         <button
           onClick={() => handleSendMessage('React frontend, Node.js backend, and PostgreSQL database on app-network')}
-          className="shrink-0 px-2 py-1 rounded bg-[#241e1b] text-[#a3958c] border border-[#3a312c] hover:text-[#f0e8e2] transition"
+          className="shrink-0 px-2 py-1 rounded bg-[#241e1b] text-[#a3958c] border border-[#3a312c] hover:text-[#f0e8e2] transition cursor-pointer"
         >
           ⚡ React + Node + Postgres
         </button>

@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.models.graph import GraphData, DeployRequest
 from app.engine.validator import validate_graph
 from app.engine.generator import generate_docker_compose, generate_files
-from app.engine.ai_assistant import generate_ai_architecture, PromptRequest
+from app.engine.ai_assistant import generate_ai_architecture, analyze_docker_logs, PromptRequest, LogAnalyzeRequest
 from app.docker.service import deploy_stack, stop_stack, get_stack_status, get_container_logs
 
 from dotenv import load_dotenv
@@ -71,3 +71,9 @@ def logs(container_id: str):
 def ai_suggest(req: PromptRequest):
     graph_suggestion = generate_ai_architecture(req.prompt)
     return graph_suggestion
+
+@app.post("/api/ai/analyze-logs")
+def ai_analyze_logs(req: LogAnalyzeRequest):
+    res = analyze_docker_logs(req.logs)
+    return res
+

@@ -547,3 +547,204 @@ Return ONLY valid JSON.
         ]
     }
     return validate_graph(fallback_graph)
+
+class LogAnalyzeRequest(BaseModel):
+    logs: str
+
+def analyze_docker_logs(logs_text: str) -> Dict[str, Any]:
+    gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip()
+
+    system_prompt = """
+You are an expert Docker debugging architect. Analyze the deployment logs and respond ONLY in the following structured format:
+
+🔴 DEPLOYMENT FAILED (or 🟢 DEPLOYMENT SUCCESSFUL / ⚠️ DEPLOYMENT WARNING)
+
+Error:
+<Concise error title>
+
+Root Cause:
+<Technical explanation of why the failure happened>
+
+Affected Service:
+<Name of the affected service or container>
+
+Fix:
+<Direct step-by-step fix instructions>
+
+Recommended:
+<Best practice or systemic solution>
+
+Command:
+<Specific terminal command to execute for cleanup/resolution>
+
+Do not include markdown intro text, conversational greetings, or generic explanations outside of these sections.
+"""
+
+    if gemini_api_key:
+        try:
+            from google import genai
+            from google.genai import types
+            client = genai.Client(api_key=gemini_api_key)
+
+            for model_name in ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-2.5-flash', 'gemini-2.0-flash']:
+                try:
+                    chat = client.chats.create(
+                        model=model_name,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt
+                        )
+                    )
+                    response = chat.send_message(f"Analyze these Docker deployment logs:\n\n{logs_text}")
+                    if response and response.text:
+                        return {"analysis": response.text.strip()}
+                except Exception:
+                    continue
+        except Exception as e:
+            print(f"[AI ENGINE] Log analysis via Gemini failed: {e}")
+
+    # Structured Deterministic Rule-Based Analyzer
+    logs_lower = logs_text.lower()
+    reports = []
+
+    # 1. Container Name Conflict
+    if "is already in use by container" in logs_lower or "conflict. the container name" in logs_lower:
+        import re
+        c_match = re.search(r'container name "([^"]+)"', logs_text) or re.search(r'container "([^"]+)"', logs_text)
+        conflicting_name = c_match.group(1) if c_match else "container"
+        reports.append(f"""🔴 DEPLOYMENT FAILED
+
+Error:
+Container name conflict: "{conflicting_name}"
+
+Root Cause:
+A container named "{conflicting_name}" already exists on the Docker host.
+
+Affected Service:
+{conflicting_name}
+
+Fix:
+Remove the existing container or use dynamic container service naming.
+
+Recommended:
+Remove hardcoded `container_name` from generated Compose files and use `--remove-orphans`.
+
+Command:
+docker rm -f {conflicting_name}""")
+
+    # 2. Image Pull Access Denied / Repository Not Found
+    elif "pull access denied" in logs_lower or "repository does not exist" in logs_lower:
+        import re
+        img_match = re.search(r'pull access denied for ([^\s,]+)', logs_text) or re.search(r'Image ([^\s:]+)', logs_text)
+        img_name = img_match.group(1) if img_match else "custom-image"
+        reports.append(f"""🔴 DEPLOYMENT FAILED
+
+Error:
+Image pull failure for "{img_name}"
+
+Root Cause:
+The image tag "{img_name}" does not exist on Docker Hub or requires authentication.
+
+Affected Service:
+{img_name.split(':')[0]}
+
+Fix:
+Update the container's image tag in Node Settings to an official Docker Hub image (e.g., node:22-alpine, python:3.11-slim, postgres:16-alpine).
+
+Recommended:
+Use standard base images or define build context for custom application containers.
+
+Command:
+docker pull node:22-alpine""")
+
+    # 3. Port Conflict
+    elif "port is already allocated" in logs_lower or "address already in use" in logs_lower:
+        import re
+        port_match = re.search(r'port (\d+)', logs_lower) or re.search(r'bind for 0\.0\.0\.0:(\d+)', logs_lower)
+        bound_port = port_match.group(1) if port_match else "requested port"
+        reports.append(f"""🔴 DEPLOYMENT FAILED
+
+Error:
+Host port conflict on port {bound_port}
+
+Root Cause:
+Host port {bound_port} is already bound by another process or container on the host machine.
+
+Affected Service:
+Port Bind ({bound_port})
+
+Fix:
+Change the host port in Port Bind node settings (e.g. from {bound_port} to {int(bound_port)+1 if bound_port.isdigit() else '8081'}).
+
+Recommended:
+Use VisualDocker dynamic free-port discovery or remove unneeded host port bindings.
+
+Command:
+netstat -ano | findstr :{bound_port}""")
+
+    # 4. Volume Mount Path Issue
+    elif "no such file or directory" in logs_lower and "volume" in logs_lower:
+        reports.append("""🔴 DEPLOYMENT FAILED
+
+Error:
+Volume mount path error
+
+Root Cause:
+The specified container target mount path does not exist or lacks write permissions.
+
+Affected Service:
+Volume Mount
+
+Fix:
+Verify the container mount path in Volume Node settings (e.g. /var/lib/postgresql/data for Postgres).
+
+Recommended:
+Use standard database persistence volume target paths.
+
+Command:
+docker volume prune -f""")
+
+    # 5. Clean / Warning Output
+    if not reports:
+        if "version is obsolete" in logs_lower and not ("error" in logs_lower or "failed" in logs_lower):
+            reports.append("""⚠️ DEPLOYMENT WARNING
+
+Error:
+Obsolete compose version attribute
+
+Root Cause:
+The `version` top-level attribute in `docker-compose.yml` is deprecated in Docker Compose v2.
+
+Affected Service:
+docker-compose.yml
+
+Fix:
+No action required. Compose v2 automatically ignores top-level version tags.
+
+Recommended:
+Omit `version: '3.8'` attribute in modern Compose files.
+
+Command:
+docker compose config""")
+        else:
+            line_count = len(logs_text.splitlines())
+            reports.append(f"""🟢 DEPLOYMENT SUCCESSFUL
+
+Error:
+None
+
+Root Cause:
+All stack containers, networks, and volumes initialized cleanly.
+
+Affected Service:
+All stack services ({line_count} log entries)
+
+Fix:
+No action required.
+
+Recommended:
+Inspect running metrics under the Console & Status panel.
+
+Command:
+docker ps""")
+
+    return {"analysis": "\n\n".join(reports)}

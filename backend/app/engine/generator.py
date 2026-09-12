@@ -91,7 +91,6 @@ def generate_docker_compose(graph: GraphData) -> str:
 
         service_spec: Dict[str, Any] = {
             "image": c_image,
-            "container_name": c_label,
         }
 
         # Command override handling
