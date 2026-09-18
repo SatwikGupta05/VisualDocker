@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Sparkles, Send, X, Bot, User, RefreshCw, FileText, CheckCircle2, RotateCcw, Activity } from 'lucide-react';
+import { Sparkles, Send, X, Bot, User, RefreshCw, FileText, CheckCircle2, RotateCcw, Activity, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import axios from 'axios';
 
@@ -16,6 +16,7 @@ export const AiChatbotPopup: React.FC = () => {
   const { nodes, edges, isAiModalOpen, setIsAiModalOpen, loadPreset, addConsoleLog, consoleLogs } = useAppStore();
   const [inputPrompt, setInputPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
   const [previousGraph, setPreviousGraph] = useState<{ nodes: any[]; edges: any[] } | null>(null);
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -174,9 +175,9 @@ export const AiChatbotPopup: React.FC = () => {
   };
 
   return (
-    <div className="absolute bottom-4 right-4 z-40 w-96 sm:w-[420px] h-[520px] bg-[#1a1614] border-2 border-[#ff7b00]/60 rounded-2xl shadow-[0_10px_35px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden font-sans">
+    <div className={`absolute bottom-4 right-4 z-40 w-96 sm:w-[420px] ${isMinimized ? 'h-auto' : 'h-[520px]'} bg-[#1a1614] border-2 border-[#ff7b00]/60 rounded-2xl shadow-[0_10px_35px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden font-sans transition-all duration-300`}>
       {/* Chatbot Header */}
-      <div className="bg-[#241e1b] border-b border-[#3a312c] px-4 py-3 flex items-center justify-between">
+      <div className="bg-[#241e1b] border-b border-[#3a312c] px-4 py-3 flex items-center justify-between select-none">
         <div className="flex items-center gap-2.5">
           <div className="p-1.5 bg-[#ff7b00]/10 text-[#ff7b00] rounded-lg border border-[#ff7b00]/30 shadow-sm">
             <Bot className="w-5 h-5 text-[#ff7b00]" />
@@ -185,16 +186,32 @@ export const AiChatbotPopup: React.FC = () => {
             <h3 className="font-extrabold text-[14px] text-[#ff7b00] uppercase tracking-wider flex items-center gap-1.5">
               AI STACK ARCHITECT
             </h3>
-            <p className="text-[10px] text-[#a3958c] font-mono">Interactive Conversational Assistant</p>
+            <p className="text-[10px] text-[#a3958c] font-mono">
+              {isMinimized ? 'Minimized • Click arrow to expand' : 'Interactive Conversational Assistant'}
+            </p>
           </div>
         </div>
-        <button
-          onClick={() => setIsAiModalOpen(false)}
-          className="text-[#a3958c] hover:text-[#f0e8e2] p-1 rounded-lg hover:bg-[#322a26] transition"
-        >
-          <X className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setIsMinimized(!isMinimized)}
+            className="text-[#a3958c] hover:text-[#ff7b00] p-1 rounded-lg hover:bg-[#322a26] transition cursor-pointer"
+            title={isMinimized ? "Expand AI Architect" : "Minimize AI Architect"}
+          >
+            {isMinimized ? <ChevronUp className="w-4.5 h-4.5 text-[#ff7b00]" /> : <ChevronDown className="w-4.5 h-4.5" />}
+          </button>
+          <button
+            onClick={() => setIsAiModalOpen(false)}
+            className="text-[#a3958c] hover:text-[#f0e8e2] p-1 rounded-lg hover:bg-[#322a26] transition cursor-pointer"
+            title="Close AI Architect"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
+
+      {!isMinimized && (
+        <>
+          {/* Quick Action Shortcuts */}
 
       {/* Quick Action Shortcuts */}
       <div className="bg-[#161210] border-b border-[#3a312c] p-2 flex items-center gap-1.5 overflow-x-auto text-[11px] font-mono">
@@ -295,6 +312,8 @@ export const AiChatbotPopup: React.FC = () => {
           <Send className="w-4 h-4" />
         </button>
       </form>
+        </>
+      )}
     </div>
   );
 };
