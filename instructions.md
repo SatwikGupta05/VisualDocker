@@ -11,6 +11,11 @@ Before getting started, make sure you have the following installed on your machi
 - **Python**: v3.10, v3.11, or v3.13 ([Download](https://www.python.org/))
 - **Docker Desktop**: Running with Docker Compose support ([Download](https://www.docker.com/products/docker-desktop/))
 
+> **Note on Docker Engine Setup**:
+> - Make sure Docker Desktop is open and active before clicking **DEPLOY STACK**.
+> - **Windows Users**: If the backend fails to connect to the Docker socket, open Docker Desktop Settings $\rightarrow$ General and enable **"Expose daemon on tcp://localhost:2375 without TLS"**.
+> - **Linux Users**: Add your user to the `docker` group (`sudo usermod -aG docker $USER`).
+
 ---
 
 ## 🚀 Quick Start Guide
