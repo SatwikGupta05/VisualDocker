@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Sparkles, Send, X, Bot, User, RefreshCw, FileText, CheckCircle2, RotateCcw, Activity, ChevronDown, ChevronUp } from 'lucide-react';
+import { Sparkles, Send, X, Bot, User, RefreshCw, FileText, CheckCircle2, RotateCcw, Activity, ChevronDown, ChevronUp, Zap } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import axios from 'axios';
 
@@ -10,12 +10,17 @@ interface Message {
   timestamp: string;
   nodesCount?: number;
   hasRevertOption?: boolean;
+  recommendedCommand?: string;
+  isSolutionExecuted?: boolean;
+  suggestedGraph?: { nodes: any[]; edges: any[] };
+  hasIssues?: boolean;
 }
 
 export const AiChatbotPopup: React.FC = () => {
   const { nodes, edges, isAiModalOpen, setIsAiModalOpen, loadPreset, addConsoleLog, consoleLogs } = useAppStore();
   const [inputPrompt, setInputPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isExecutingFix, setIsExecutingFix] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [previousGraph, setPreviousGraph] = useState<{ nodes: any[]; edges: any[] } | null>(null);
   const [messages, setMessages] = useState<Message[]>([
@@ -110,10 +115,56 @@ export const AiChatbotPopup: React.FC = () => {
     setPreviousGraph(null);
   };
 
-  const handleInspectGraph = () => {
-    const nodeNames = nodes.map(n => n.data?.label || n.id).join(', ');
-    const promptText = `Analyze current canvas architecture (${nodes.length} nodes: ${nodeNames || 'Empty canvas'}) and optimize layout.`;
-    handleSendMessage(promptText);
+  const handleInspectGraph = async () => {
+    if (nodes.length === 0) {
+      const emptyMsg: Message = {
+        id: Date.now().toString(),
+        sender: 'assistant',
+        text: '⚠️ Canvas is empty. Drag services onto the grid or describe an architecture to generate!',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      setMessages((prev) => [...prev, emptyMsg]);
+      return;
+    }
+
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      sender: 'user',
+      text: `🔍 Inspect & Audit Canvas Architecture (${nodes.length} nodes, ${edges.length} connections)...`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+    setIsLoading(true);
+    addConsoleLog('[AI CHATBOT] Running AI DevOps architecture audit on current canvas...');
+
+    try {
+      const res = await axios.post('/api/ai/inspect', {
+        graph: { nodes, edges }
+      });
+
+      if (res.data && res.data.review) {
+        const botReply: Message = {
+          id: (Date.now() + 1).toString(),
+          sender: 'assistant',
+          text: res.data.review,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          suggestedGraph: res.data.suggested_graph,
+          hasIssues: res.data.has_issues
+        };
+        setMessages((prev) => [...prev, botReply]);
+      }
+    } catch (err: any) {
+      const errorMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        sender: 'assistant',
+        text: `Error auditing canvas graph: ${err.message || 'Failed to communicate with AI engine'}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleAnalyzeLogs = async () => {
@@ -157,7 +208,8 @@ export const AiChatbotPopup: React.FC = () => {
           id: (Date.now() + 1).toString(),
           sender: 'assistant',
           text: res.data.analysis,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          recommendedCommand: res.data.recommended_command
         };
         setMessages((prev) => [...prev, botReply]);
       }
@@ -171,6 +223,39 @@ export const AiChatbotPopup: React.FC = () => {
       setMessages((prev) => [...prev, errorReply]);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleExecuteSolution = async (msg: Message) => {
+    if (!msg.recommendedCommand) return;
+    setIsExecutingFix(true);
+    addConsoleLog(`[AI CHATBOT] Executing solution fix: "${msg.recommendedCommand}"...`);
+
+    try {
+      const res = await axios.post('/api/ai/execute-fix', { command: msg.recommendedCommand });
+      
+      // Mark solution executed
+      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, isSolutionExecuted: true } : m));
+
+      const botConfirmMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        sender: 'assistant',
+        text: `⚡ **Solution Executed Successfully!**\n\nCommand Executed:\n\`${msg.recommendedCommand}\`\n\nResult Output:\n\`\`\`text\n${res.data.output || 'Done.'}\n\`\`\`\n\n👉 Click **RE-DEPLOY STACK** in the top navigation header to launch your updated stack!`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      setMessages(prev => [...prev, botConfirmMsg]);
+      addConsoleLog(`[SUCCESS] Executed fix solution command: ${msg.recommendedCommand}`);
+    } catch (err: any) {
+      const errMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        sender: 'assistant',
+        text: `Error executing fix command: ${err.message}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      setMessages(prev => [...prev, errMsg]);
+      addConsoleLog(`[ERROR] Solution execution failed: ${err.message}`);
+    } finally {
+      setIsExecutingFix(false);
     }
   };
 
@@ -250,12 +335,52 @@ export const AiChatbotPopup: React.FC = () => {
             }`}>
               {msg.sender === 'user' ? <User className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
             </div>
-            <div className={`max-w-[80%] p-3 rounded-2xl ${
+            <div className={`max-w-[85%] p-3 rounded-2xl ${
               msg.sender === 'user' 
                 ? 'bg-[#ff7b00]/20 text-[#f0e8e2] border border-[#ff7b00]/40 rounded-tr-none' 
                 : 'bg-[#1a1614] text-[#e8dfd8] border border-[#3a312c] rounded-tl-none shadow-md'
             }`}>
               <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+              
+              {/* Executable Solution Button */}
+              {msg.recommendedCommand && !msg.isSolutionExecuted && (
+                <div className="mt-3 pt-2.5 border-t border-[#3a312c]">
+                  <button
+                    onClick={() => handleExecuteSolution(msg)}
+                    disabled={isExecutingFix}
+                    className="w-full px-3 py-2 rounded-xl bg-[#ff7b00] hover:bg-[#e06c00] text-black font-extrabold text-[11px] font-mono tracking-wider uppercase transition shadow-[0_0_15px_rgba(255,123,0,0.4)] flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Zap className="w-3.5 h-3.5 fill-current" />
+                    {isExecutingFix ? 'EXECUTING SOLUTION...' : `IMPLEMENT SOLUTION (${msg.recommendedCommand})`}
+                  </button>
+                </div>
+              )}
+
+              {msg.isSolutionExecuted && (
+                <div className="mt-2 text-[10px] font-mono text-emerald-400 font-bold flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                  Solution executed on host system
+                </div>
+              )}
+
+              {msg.suggestedGraph && msg.hasIssues && (
+                <div className="mt-3 pt-2.5 border-t border-[#3a312c]">
+                  <button
+                    onClick={() => {
+                      if (msg.suggestedGraph) {
+                        setPreviousGraph({ nodes: [...nodes], edges: [...edges] });
+                        loadPreset(msg.suggestedGraph.nodes, msg.suggestedGraph.edges);
+                        addConsoleLog('[AI CHATBOT] Applied AI-suggested audit fixes to canvas.');
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 font-bold text-[11px] font-mono tracking-wider uppercase transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                    APPLY AUDIT FIXES TO CANVAS
+                  </button>
+                </div>
+              )}
+
               {msg.nodesCount && (
                 <div className="mt-2 pt-2 border-t border-[#3a312c] space-y-2">
                   <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-mono font-bold">

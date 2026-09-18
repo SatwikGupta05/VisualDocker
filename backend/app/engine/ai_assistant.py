@@ -73,12 +73,25 @@ def auto_fix_and_validate_graph(parsed: Dict[str, Any], prompt: str = "") -> Dic
         label = str(data.get("label", "")).lower()
         comb = f"{label} {image}"
 
-        # 1. Check explicitly requested port in prompt for backend/api
-        if "api" in comb or "backend" in comb:
-            if "5000" in prompt_lower:
-                return 5000
-            if "8000" in prompt_lower:
-                return 8000
+        # 1. Check explicitly requested port in prompt for backend/api/frontend
+        import re
+        if "backend" in comb or "api" in comb:
+            backend_match = re.search(r'(?:backend|api)\s*(?:on|port)?\s*:?\s*(\d{2,5})', prompt_lower) or re.search(r'(\d{2,5})\s*(?:for|on)?\s*(?:backend|api)', prompt_lower)
+            if backend_match:
+                return int(backend_match.group(1))
+        
+        if "frontend" in comb or "react" in comb or "web" in comb:
+            frontend_match = re.search(r'(?:frontend|react|web)\s*(?:on|port)?\s*:?\s*(\d{2,5})', prompt_lower) or re.search(r'(\d{2,5})\s*(?:for|on)?\s*(?:frontend|react|web)', prompt_lower)
+            if frontend_match:
+                return int(frontend_match.group(1))
+
+        # Fallback general port match from prompt
+        if any(keyword in comb for keyword in ["api", "backend", "frontend", "web", "server", "app"]):
+            port_matches = re.findall(r'\b(?:port\s*|on\s*)?(\d{2,5})\b', prompt_lower)
+            if port_matches:
+                for p_str in port_matches:
+                    if p_str not in ["1", "2", "3", "4", "5"]:
+                        return int(p_str)
 
         # 2. Known infrastructure service default port
         for srv, p in DEFAULT_PORTS.items():
@@ -210,6 +223,9 @@ def auto_fix_and_validate_graph(parsed: Dict[str, Any], prompt: str = "") -> Dic
         tgt_node = container_nodes.get(tgt)
         if tgt_node:
             resolved_port = get_container_port(tgt_node)
+            # Update target container ports array if custom port found from prompt
+            if resolved_port:
+                tgt_node.get("data", {})["ports"] = [str(resolved_port)]
             # Ensure target_port always equals the actual internal container port
             valid_edge["target_port"] = resolved_port or edge.get("target_port")
 
@@ -452,7 +468,7 @@ Return ONLY valid JSON.
                         node["data"] = {"label": node.get("id", f"node_{idx}")}
 
                 # Apply deterministic graph validation and auto-fixer layer
-                return validate_graph(parsed, prompt)
+                return auto_fix_and_validate_graph(parsed, prompt)
 
         except Exception as e:
             print(f"[AI ENGINE ERROR] Gemini API generation failed: {e}")
@@ -546,7 +562,7 @@ Return ONLY valid JSON.
             {"id": "e_n7", "source": "c_worker", "target": "net_backend", "type": "network_attachment"}
         ]
     }
-    return validate_graph(fallback_graph)
+    return auto_fix_and_validate_graph(fallback_graph, prompt)
 
 class LogAnalyzeRequest(BaseModel):
     logs: str
@@ -747,4 +763,99 @@ Inspect running metrics under the Console & Status panel.
 Command:
 docker ps""")
 
-    return {"analysis": "\n\n".join(reports)}
+    analysis_text = "\n\n".join(reports)
+
+    # Extract executable command from report if present
+    import re
+    cmd_match = re.search(r'Command:\s*\n?`?([^\n`]+)`?', analysis_text, re.IGNORECASE)
+    recommended_cmd = None
+    if cmd_match:
+        found_cmd = cmd_match.group(1).strip()
+        if any(found_cmd.lower().startswith(p) for p in ["docker", "netstat"]):
+            recommended_cmd = found_cmd
+
+    return {
+        "analysis": analysis_text,
+        "recommended_command": recommended_cmd
+    }
+
+class GraphInspectRequest(BaseModel):
+    graph: Dict[str, Any]
+
+def inspect_and_review_graph(graph: Dict[str, Any]) -> Dict[str, Any]:
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+
+    containers = [n for n in nodes if n.get("type") == "containerNode"]
+    networks = [n for n in nodes if n.get("type") == "networkNode"]
+    volumes = [n for n in nodes if n.get("type") == "volumeNode"]
+    ports = [n for n in nodes if n.get("type") == "portNode"]
+
+    issues = []
+    enhancements = []
+    strengths = []
+
+    # 1. Database persistence audit
+    for c in containers:
+        label = c.get("data", {}).get("label", "").lower()
+        img = c.get("data", {}).get("image", "").lower()
+        if any(db in label or db in img for db in ["postgres", "mysql", "mariadb", "mongo", "redis"]):
+            # Check if volume attached
+            c_id = c.get("id")
+            has_vol = any(e.get("source") == c_id or e.get("target") == c_id for e in edges if e.get("type") == "volume_mount")
+            if not has_vol:
+                issues.append(f"🔴 **Missing Volume Mount for Database `{c.get('data', {}).get('label')}`**: Database data is non-persistent and will be lost when container stops. Add a Volume Node and connect it.")
+            else:
+                strengths.append(f"✅ **Persistent Storage Configured**: `{c.get('data', {}).get('label')}` is mounted to a volume.")
+
+    # 2. Network Isolation Audit
+    if len(containers) >= 2 and len(networks) == 0:
+        issues.append("🔴 **No Isolated Networks Configured**: All containers are running on default host network. Create dedicated bridge networks for container isolation.")
+    elif len(networks) > 0:
+        strengths.append(f"✅ **Custom Network Topologies**: {len(networks)} network(s) configured.")
+
+    # 3. Port Exposure Audit
+    if len(ports) == 0 and len(containers) > 0:
+        enhancements.append("🟡 **No Host Ports Exposed**: Stack containers cannot be accessed from outside the host machine. Attach Port Bind nodes to entry services (e.g. Frontend or Nginx Proxy).")
+
+    # 4. Proxy Routing Audit
+    has_proxy = any("nginx" in c.get("data", {}).get("label", "").lower() or "proxy" in c.get("data", {}).get("label", "").lower() for c in containers)
+    if has_proxy:
+        strengths.append("✅ **Reverse Proxy Included**: Ingress traffic routing handled properly.")
+
+    # Rule-Based Review Output Generation
+    report_lines = [
+        "🔍 **AI ARCHITECTURE AUDIT & REVIEW REPORT**\n",
+        f"• **Inspected Graph**: {len(containers)} Containers, {len(networks)} Networks, {len(volumes)} Volumes, {len(ports)} Port Binds ({len(edges)} connections)\n"
+    ]
+
+    if strengths:
+        report_lines.append("**STRENGTHS & GOOD PRACTICES**:")
+        for s in strengths:
+            report_lines.append(f"- {s}")
+        report_lines.append("")
+
+    if issues:
+        report_lines.append("**CRITICAL ISSUES & MISSING COMPONENTS**:")
+        for i in issues:
+            report_lines.append(f"- {i}")
+        report_lines.append("")
+
+    if enhancements:
+        report_lines.append("**RECOMMENDED ENHANCEMENTS**:")
+        for e in enhancements:
+            report_lines.append(f"- {e}")
+        report_lines.append("")
+
+    if not issues and not enhancements:
+        report_lines.append("🌟 **EXCELLENT ARCHITECTURE!** Your custom manual stack follows Docker security and layout best practices perfectly.")
+
+    # Provide AI-suggested fixed graph structure (auto-validated)
+    suggested_fixed_graph = auto_fix_and_validate_graph(graph)
+
+    return {
+        "review": "\n".join(report_lines),
+        "has_issues": len(issues) > 0 or len(enhancements) > 0,
+        "suggested_graph": suggested_fixed_graph
+    }
+

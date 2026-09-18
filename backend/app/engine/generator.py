@@ -229,6 +229,12 @@ def generate_files(graph: GraphData) -> List[Dict[str, str]]:
 
                         # 2. Determine target container's actual internal port if edge target_port is missing
                         if not edge_target_port:
+                            # Check target node data.ports array first
+                            node_ports = getattr(other_node.data, "ports", [])
+                            if node_ports and isinstance(node_ports, list) and len(node_ports) > 0:
+                                edge_target_port = str(node_ports[0])
+
+                        if not edge_target_port:
                             # Check connected portNodes
                             for p_edge in graph.edges:
                                 if p_edge.target == other_node.id or p_edge.source == other_node.id:
