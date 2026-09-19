@@ -103,13 +103,26 @@ graph TD
 
 ---
 
-## 🛠️ Prerequisites
+## 🛠️ Prerequisites & Docker Engine Setup
 
-Ensure the following tools are installed on your host machine:
+Ensure the following tools are installed and running on your host machine:
 
 - **Node.js**: `v18.0.0` or higher ([Download](https://nodejs.org/))
 - **Python**: `v3.10`, `v3.11`, or `v3.13` ([Download](https://www.python.org/))
 - **Docker Desktop**: Running with Docker Compose support ([Download](https://www.docker.com/products/docker-desktop/))
+
+> [!IMPORTANT]
+> **Docker Engine Connection Requirements**:
+> 1. **Ensure Docker Desktop is Active**: Open and launch Docker Desktop before deploying stacks.
+> 2. **Windows Configuration**:
+>    - Ensure Docker Desktop is configured to use Linux Containers.
+>    - *(Optional Troubleshooting)*: If backend fails to connect to the Docker daemon, open **Docker Desktop Settings $\rightarrow$ General** and check **"Expose daemon on tcp://localhost:2375 without TLS"**.
+> 3. **Linux Setup**:
+>    - Ensure your user account belongs to the `docker` group to allow socket connections without `sudo`:
+>      ```bash
+>      sudo usermod -aG docker $USER
+>      newgrp docker
+>      ```
 
 ---
 
